@@ -195,3 +195,316 @@ manages dependencies
  ↓
 runs the application
 ```
+
+Pydantic Sqlalchemy
+Pydantic checks and structures API request/response data. SQLAlchemy model defines how Python data maps to the database. The SQLAlchemy model is not the API's data-validation layer.
+
+
+# Pydantic Schema vs SQLAlchemy Model
+
+## 1. Schema — Pydantic
+
+A **Pydantic schema** defines the structure and rules for data that comes **into or goes out of an API**.
+
+It acts as an **API contract**.
+
+```python
+from pydantic import BaseModel
+
+class PostCreate(BaseModel):
+    title: str
+    content: str
+```
+
+If a client sends:
+
+```json
+{
+    "title": "FastAPI",
+    "content": "Learning schemas"
+}
+```
+
+FastAPI/Pydantic uses `PostCreate` to:
+
+* Check whether the required fields are present.
+* Check whether the values have the expected types/rules.
+* Convert compatible input into the appropriate Python types when possible.
+* Create a Pydantic object that your Python code can work with.
+
+For example:
+
+```python
+post.title
+post.content
+```
+
+### Schema can also be used for responses
+
+A schema is not only for request data.
+
+You can define a response schema:
+
+```python
+class PostResponse(BaseModel):
+    id: int
+    title: str
+    content: str
+```
+
+This tells FastAPI what the API response should look like.
+
+Therefore:
+
+```text
+Schema = API data structure + validation
+```
+
+---
+
+# 2. Model — SQLAlchemy
+
+A **SQLAlchemy model** represents a **database table in Python**.
+
+It defines how Python objects and their attributes correspond to database tables and columns.
+
+```python
+from sqlalchemy import Column, Integer, String
+
+class Post(Base):
+    __tablename__ = "posts"
+
+    id = Column(Integer, primary_key=True)
+    title = Column(String)
+    content = Column(String)
+```
+
+This tells SQLAlchemy:
+
+```text
+Python Post object
+       ↓
+       maps to
+       ↓
+Database "posts" table
+
+id       → id column
+title    → title column
+content  → content column
+```
+
+The model is mainly responsible for **mapping Python objects to database records** and allowing SQLAlchemy to generate/execute database operations.
+
+For example:
+
+```python
+post = Post(
+    title="FastAPI",
+    content="Learning SQLAlchemy"
+)
+
+db.add(post)
+db.commit()
+```
+
+SQLAlchemy uses the model's mapping to know how this object corresponds to a row in the `posts` table.
+
+---
+
+# 3. Schema vs Model
+
+The easiest way to understand the difference is:
+
+```text
+             API
+              ↕
+       Pydantic Schema
+              ↕
+           Python
+              ↕
+      SQLAlchemy Model
+              ↕
+          Database
+```
+
+### Pydantic Schema
+
+Answers:
+
+> **"What data should the API accept or return, and does it satisfy the API's schema?"**
+
+### SQLAlchemy Model
+
+Answers:
+
+> **"How does this Python object correspond to the database table and its columns?"**
+
+---
+
+# 4. Complete Example
+
+Suppose the client wants to create a post.
+
+### Step 1 — Client sends request
+
+```json
+{
+    "title": "FastAPI",
+    "content": "Learning FastAPI"
+}
+```
+
+### Step 2 — Pydantic validates the request
+
+```python
+class PostCreate(BaseModel):
+    title: str
+    content: str
+```
+
+FastAPI receives the request and uses `PostCreate`.
+
+```text
+JSON request
+     ↓
+PostCreate
+     ↓
+Pydantic validation
+     ↓
+Pydantic object
+```
+
+Now Python can work with:
+
+```python
+post.title
+post.content
+```
+
+---
+
+### Step 3 — Create SQLAlchemy object
+
+You can then use the validated data to create a SQLAlchemy model object:
+
+```python
+db_post = Post(
+    title=post.title,
+    content=post.content
+)
+```
+
+Now:
+
+```text
+Pydantic object
+      ↓
+validated API data
+      ↓
+SQLAlchemy Post object
+      ↓
+database mapping
+      ↓
+posts table
+```
+
+---
+
+# 5. Important: The Model Is Not the Same as API Validation
+
+Don't think:
+
+> "SQLAlchemy model checks whether the API request is correct."
+
+That's primarily the job of **Pydantic** in a FastAPI application.
+
+Instead:
+
+```text
+Pydantic Schema
+→ validates/structures API data
+
+SQLAlchemy Model
+→ maps Python objects to database tables
+```
+
+However, SQLAlchemy models can define **database-related constraints**, such as:
+
+```python
+title = Column(String, nullable=False, unique=True)
+```
+
+These constraints describe requirements for the database and can result in database/ORM errors if violated.
+
+That is different from using Pydantic to validate an incoming API request.
+
+---
+
+# 6. One-Line Memory Trick
+
+> **Schema = API contract**
+
+> **Model = Database mapping**
+
+Or even simpler:
+
+```text
+Pydantic Schema → API ↔ Python
+
+SQLAlchemy Model → Python ↔ Database
+```
+
+So in a typical FastAPI application:
+
+```text
+Client
+  ↓
+JSON
+  ↓
+Pydantic Schema
+  ↓
+Validated Python data
+  ↓
+SQLAlchemy Model
+  ↓
+Database
+```
+
+And for a response:
+
+```text
+Database
+  ↓
+SQLAlchemy Model
+  ↓
+Python data
+  ↓
+Pydantic Response Schema
+  ↓
+JSON response
+  ↓
+Client
+```
+
+Engine connects SQLAlchemy to the database.
+Session performs database operations.
+Model defines the database mapping.
+Schema handles API data.
+
+
+When a request reaches a route that needs database access, FastAPI creates a SQLAlchemy Session through get_db(). The Session allows the route to perform database operations, using the Engine to communicate with the database. After the request is finished, the Session is closed.
+
+
+Model
+ ↓
+"what does this Python object represent?"
+ ↓
+Session
+ ↓
+"manage what I want to do with this object"
+ ↓
+Engine
+ ↓
+"manage the database connection"
+ ↓
+Database
