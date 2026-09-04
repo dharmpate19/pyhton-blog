@@ -8,38 +8,51 @@ class UserBase(BaseModel):
 
 
 class UserCreate(UserBase):
-    pass
+    password : str = Field(min_length=8)
 
 
 class UserUpdate(BaseModel):
     username : str | None = Field(default=None,min_length=1, max_length=50)
     email : EmailStr | None = Field(default=None,max_length=120)
-    image_file : str | None =Field(default=None,min_length=1, max_length=300)
 
 
-class UserResponse(UserBase):
-    model_config = ConfigDict(form_attributes=True)
+class UserPublic(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
 
-    id: int
-    image_file : str | None
+    id : int
+    username : str 
+    image_file: str | None
     image_path : str
 
+class UserPrivate(UserPublic):
+    email : EmailStr
+
+class Token(BaseModel):
+    access_token : str
+    token_type: str
 
 class PostBase(BaseModel):
     title: str = Field(min_length=1, max_length=100)
     content: str = Field(min_length=1)
 
 class PostCreate(PostBase):
-    user_id : int
+    pass
 
 class PostUpdate(BaseModel):
     title: str | None = Field(default=None,min_length=1, max_length=100)
     content: str | None = Field(default=None,min_length=1)
 
 class PostResponse(PostBase):
-    model_config = ConfigDict(form_attributes=True)
+    model_config = ConfigDict(from_attributes=True)
 
     id : int
     user_id : int
     date_posted: datetime
-    author : UserResponse
+    author : UserPublic
+
+class PaginatedPostsResponse(BaseModel):
+    posts: list[PostResponse]
+    total: int
+    skip: int
+    limit: int
+    has_more: bool

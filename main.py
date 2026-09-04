@@ -1,13 +1,13 @@
 from contextlib import asynccontextmanager
 from typing import Annotated
 from fastapi.exception_handlers import http_exception_handler, request_validation_exception_handler
-from fastapi import FastAPI, Request, HTTPException, status, Depends
+from fastapi import FastAPI, Request,  HTTPException, status, Depends
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -15,7 +15,7 @@ import models
 
 from database import Base, engine, get_db
 from routers import posts, users
-
+from config import settings
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     # startup
@@ -39,11 +39,34 @@ app.include_router(posts.router, prefix="/api/posts", tags=["Posts"])
 @app.get("/", include_in_schema= False, name="home")
 @app.get("/posts", include_in_schema=False, name="posts")
 async def home(request: Request, db: Annotated[AsyncSession, Depends(get_db)]):
-    result = await db.execute(select(models.Post).options(selectinload(models.Post.author)).order_by(models.Post.date_posted.desc()))
-    posts = result.scalars().all()
-    return templates.TemplateResponse(request, "home.html", {"posts": posts, "title": "Home"},)
 
-@app.get("/post/{post_id}", include_in_schema=False, name="post")
+    count_result = await db.execute(
+        select(func.count())
+        .select_from(models.Post)
+        )
+    total = count_result.scalar() or 0
+
+    result = await db.execute(
+        select(models.Post)
+        .options(selectinload(models.Post.author))
+        .order_by(models.Post.date_posted.desc())
+        .limit(settings.posts_per_page),
+        )
+    posts = result.scalars().all()
+
+    has_more = len(posts) < total
+    return templates.TemplateResponse(
+        request, 
+        "home.html", 
+        {
+            "posts": posts,
+            "title": "Home",
+            "limit": settings.posts_per_page,
+            "has_more": has_more,
+        },
+    )
+
+@app.get("/post/{post_id}", include_in_schema=False, name="post_page")
 async def post_page(request: Request,  post_id: int, db : Annotated[AsyncSession, Depends(get_db)]):
     result = await db.execute(select(models.Post).options(selectinload(models.Post.author)).where(models.Post.id == post_id))
     post = result.scalars().first()
@@ -59,7 +82,7 @@ async def user_posts_page(
     request: Request,
     user_id : int,
     db : Annotated[AsyncSession, Depends(get_db)], 
-):
+):  
     result = await db.execute(select(models.User).where(models.User.id == user_id))
     user = result.scalars().first()
     if not user:
@@ -68,17 +91,62 @@ async def user_posts_page(
             detail="User not found",
         )
 
-    result = await db.execute(select(models.Post).options(selectinload(models.Post.author)).where(models.Post.user_id == user_id).order_by(models.Post.date_posted.desc()))
+    count_result = await db.execute(
+            select(func.count())
+            .select_from(models.Post)
+            .where(models.Post.user_id == user_id)
+        )
+    
+    total = count_result.scalar() or 0
+
+    result = await db.execute(
+        select(models.Post)
+        .options(selectinload(models.Post.author))
+        .where(models.Post.user_id == user_id)
+        .order_by(models.Post.date_posted.desc())
+        .limit(settings.posts_per_page)
+        )
     posts = result.scalars().all()
     if not posts:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Post not found for the user",
         )
+
+    has_more = len(posts) < total
     return templates.TemplateResponse(
         request,
         "user_posts.html",
-        {"posts": posts, "user": user, "title": f"{user.username}'s Posts"}
+        {
+            "posts": posts, 
+            "user": user, 
+            "title": f"{user.username}'s Posts",
+            "limit": settings.posts_per_page,
+            "has_more": has_more}
+    )
+
+@app.get("/login", include_in_schema=False)
+async def login_page(request:Request):
+    return templates.TemplateResponse(
+        request,
+        "login.html",
+        {"title": "Login"},
+    )
+
+@app.get("/register", include_in_schema=False)
+async def register_page(request: Request):
+    return templates.TemplateResponse(
+        request,
+        "register.html",
+        {"title": "Register"},
+    )
+
+@app.get("/account", include_in_schema=False)
+async def account_page(request: Request):
+    return templates.TemplateResponse(
+        request,
+        "account.html",
+        {"title": "Account"},
     )
 
 

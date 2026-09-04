@@ -1,40 +1,62 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, status, Query
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 import models
 from database import get_db
-from schemas import PostResponse, PostCreate, PostUpdate
+from schemas import PostResponse, PostCreate, PostUpdate, PaginatedPostsResponse
+
+from auth import CurrentUser
+from config import settings
 
 router = APIRouter()
 
-@router.get("", response_model=list[PostResponse])
-async def get_posts(db : Annotated[AsyncSession, Depends(get_db)]):
-    result = await db.execute(select(models.Post).options(selectinload(models.Post.author)).order_by(models.Post.date_posted.desc()))
+@router.get("", response_model=PaginatedPostsResponse)
+async def get_posts(
+    db : Annotated[AsyncSession, Depends(get_db)],
+    skip : Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=100)] = settings.posts_per_page,
+    ):
+
+    count_result = await db.execute(
+        select(func.count())
+        .select_from(models.Post)
+        )
+    total = count_result.scalar() or 0 
+    
+    result = await db.execute(
+        select(models.Post)
+        .options(selectinload(models.Post.author))
+        .order_by(models.Post.date_posted.desc())
+        .offset(skip)
+        .limit(limit),
+        )
     posts = result.scalars().all()
-    return posts
+
+    has_more = skip + len(posts) < total
+
+    return PaginatedPostsResponse(
+        posts=[PostResponse.model_validate(post) for post in posts],
+        total=total,
+        skip=skip,
+        limit=limit,
+        has_more=has_more,
+    )
 
 @router.post(
         "",
         response_model=PostResponse,
         status_code=status.HTTP_201_CREATED,
 )
-async def create_post(post: PostCreate, db: Annotated[AsyncSession, Depends(get_db)]):
-    result = await db.execute(select(models.User).where(models.User.id == post.user_id))
-    user = result.scalars().first()
-    if not user:
-        raise HTTPException(
-            status_code = status.HTTP_404_NOT_FOUND,
-            detail="User not found",
-        )
+async def create_post(post: PostCreate, db: Annotated[AsyncSession, Depends(get_db)], current_user: CurrentUser):
 
     new_post = models.Post(
         title = post.title,
         content= post.content,
-        user_id = post.user_id,
+        user_id = current_user.id,
     )
     db.add(new_post)
     await db.commit()
@@ -56,7 +78,7 @@ async def get_post(post_id: int, db: Annotated[AsyncSession, Depends(get_db)]):
 
 # Api to update the full post
 @router.put("/{post_id}", response_model=PostResponse)
-async def update_post_full(post_id: int,post_data: PostCreate, db: Annotated[AsyncSession, Depends(get_db)]):
+async def update_post_full(post_id: int,post_data: PostCreate, db: Annotated[AsyncSession, Depends(get_db)], current_user: CurrentUser):
     result = await db.execute(
         select(models.Post).where(models.Post.id == post_id),
     )
@@ -64,18 +86,14 @@ async def update_post_full(post_id: int,post_data: PostCreate, db: Annotated[Asy
     if not post:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="Post not found",)
 
-    if post_data.user_id != post.user_id:
-        result = await db.execute(select(models.User).where(models.User.id == post_data.user_id))
-        user = result.scalars().first()
-        if not user:
-            raise HTTPException(
-                status_code = status.HTTP_404_NOT_FOUND,
-                detail="User not found",
-            )
+    if post.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User is not authorized to edit this post"
+        )
 
     post.title = post_data.title
     post.content = post_data.content
-    post.user_id = post_data.user_id
 
     await db.commit()
     await db.refresh(post, attribute_names=["author"])
@@ -84,13 +102,19 @@ async def update_post_full(post_id: int,post_data: PostCreate, db: Annotated[Asy
 
 # Api to update the partial post
 @router.patch("/{post_id}", response_model=PostResponse)
-async def update_post_partially(post_id: int, post_data: PostUpdate, db: Annotated[AsyncSession, Depends(get_db)]):
+async def update_post_partially(post_id: int, post_data: PostUpdate, db: Annotated[AsyncSession, Depends(get_db)], current_user: CurrentUser):
     result = await db.execute(
         select(models.Post).where(models.Post.id == post_id),
     )
     post = result.scalars().first()
     if not post:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,detail="Post not found",)
+
+    if post.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User is not authorized to edit this post"
+        )
 
     update_data = post_data.model_dump(exclude_unset=True)
     for field , value in update_data.items():
@@ -100,9 +124,9 @@ async def update_post_partially(post_id: int, post_data: PostUpdate, db: Annotat
     await db.refresh(post, attribute_names=["author"])
     return post
 
-# Api to delet the post
+# Api to delete the post
 @router.delete("/{post_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_post(post_id: int, db: Annotated[AsyncSession, Depends(get_db)]):
+async def delete_post(post_id: int, db: Annotated[AsyncSession, Depends(get_db)], current_user: CurrentUser):
     result = await db.execute(
         select(models.Post).where(models.Post.id == post_id),
     )
@@ -111,6 +135,12 @@ async def delete_post(post_id: int, db: Annotated[AsyncSession, Depends(get_db)]
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,detail="Post not found"
             )
+
+    if post.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User is not authorized to Delete this post"
+        )
 
     await db.delete(post)
     await db.commit()

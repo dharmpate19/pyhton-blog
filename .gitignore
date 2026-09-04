@@ -8,3 +8,14 @@ wheels/
 
 # Virtual environments
 .venv
+
+
+# Environment Variable
+.env
+
+blog.db
+
+media/profile_pics/*
+
+# Seed/population images
+populate_images/*
