@@ -233,20 +233,22 @@ POST_44 = {
 }
 
 
-async def clear_existing_data()-> None:
-
+async def clear_existing_data() -> None:
+    # Delete profile pictures from local storage
     if PROFILE_PICS_DIR.exists():
         for file in PROFILE_PICS_DIR.iterdir():
             if file.is_file() and file.name != ".gitkeep":
                 file.unlink()
         print(f"Deleted profile pictures from {PROFILE_PICS_DIR}")
 
-        # Clear database tables (order respects foreign keys)
-        async with AsyncSessionLocal() as db:
-            await db.execute(delete(models.Post))
-            await db.execute(delete(models.User))
-            await db.commit()
-        print("Cleared existing data")
+    # Clear database tables (order respects foreign keys)
+    async with AsyncSessionLocal() as db:
+        await db.execute(delete(models.PasswordResetToken))
+        await db.execute(delete(models.Post))
+        await db.execute(delete(models.User))
+        await db.commit()
+    print("Cleared existing data")
+
 
 async def update_post_dates() -> None:
     now = datetime.now(UTC)
@@ -258,12 +260,14 @@ async def update_post_dates() -> None:
         if not posts:
             return
 
+        # First post (POST_44) is the oldest - ~90 days ago
         await db.execute(
             update(models.Post)
             .where(models.Post.id == posts[0].id)
-            .values(date_posted=now - timedelta(days=90)), 
+            .values(date_posted=now - timedelta(days=90)),
         )
 
+        # Remaining posts: each ~1.5 days newer than previous
         for i, post in enumerate(posts[1:], start=1):
             days_ago = (len(posts) - i) * 1.5
             hours_offset = (i * 7) % 24
@@ -274,8 +278,8 @@ async def update_post_dates() -> None:
                 .values(date_posted=post_date),
             )
 
-            await db.commit()
-        print("Updated post dates")
+        await db.commit()
+    print("Updated post dates")
 
 
 async def populate() -> None:
@@ -285,7 +289,7 @@ async def populate() -> None:
         transport=transport,
         base_url="http://localhost",
     ) as client:
-
+        # Clear existing data (local images first, then database)
         await clear_existing_data()
 
         users: list[dict] = []
@@ -302,7 +306,7 @@ async def populate() -> None:
             )
             response.raise_for_status()
             user = response.json()
-            print(f" Created: {user['username']}")
+            print(f"  Created: {user['username']}")
 
             response = await client.post(
                 "/api/users/token",
@@ -337,15 +341,17 @@ async def populate() -> None:
 
         print(f"\nCreating {len(POSTS) + 1} posts...")
 
+        # First create POST_44 (will become oldest after date update)
         response = await client.post(
             "/api/posts",
             json={"title": POST_44["title"], "content": POST_44["content"]},
-            headers={"Authorization": f"Bearer {users[0]['token']}"}
+            headers={"Authorization": f"Bearer {users[0]['token']}"},
         )
         response.raise_for_status()
-        print(f"    Created: '{POST_44['title']}'")
+        print(f"  Created: '{POST_44['title']}'")
 
-        for i , post_data in enumerate(reversed(POSTS)):
+        # Create remaining posts in reverse (last in list = oldest, first = newest)
+        for i, post_data in enumerate(reversed(POSTS)):
             user = users[i % len(users)]
             response = await client.post(
                 "/api/posts",
@@ -358,9 +364,9 @@ async def populate() -> None:
             response.raise_for_status()
             title = post_data["title"]
             print(
-                f"  Created: '{title[:50]}..."
+                f"  Created: '{title[:50]}...'"
                 if len(title) > 50
-                else f" Created: '{title}'",
+                else f"  Created: '{title}'",
             )
 
         print("\nUpdating post dates...")
@@ -369,9 +375,9 @@ async def populate() -> None:
     await engine.dispose()
 
     print("\nDone!")
-    print(f"    {len(USERS)} users")
-    print(f"    {len(POSTS) + 1} posts")
-    print(" Profile pictures saved locally")
+    print(f"  {len(USERS)} users")
+    print(f"  {len(POSTS) + 1} posts")
+    print("  Profile pictures saved locally")
 
 
 if __name__ == "__main__":

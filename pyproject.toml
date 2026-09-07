@@ -8,7 +8,9 @@ authors = [
 ]
 requires-python = ">=3.14"
 dependencies = [
+    "aiosmtplib>=5.1.2",
     "aiosqlite>=0.22.1",
+    "certifi>=2026.7.22",
     "fastapi[standard]>=0.141.1",
     "git-filter-repo>=2.47.0",
     "greenlet>=3.5.5",
